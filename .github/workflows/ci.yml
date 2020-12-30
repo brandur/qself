@@ -1,4 +1,4 @@
-name: sorg CI
+name: qself CI
 
 on:
   pull_request:

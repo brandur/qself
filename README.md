@@ -1,4 +1,4 @@
-# qself
+# qself [![Build Status](https://github.com/brandur/qself/workflows/qself%20CI/badge.svg)](https://github.com/brandur/qself/actions)
 
 Qself is a small tool to sync personal data from APIs down to local TOML files for easier portability and storage.
 
