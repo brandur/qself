@@ -1,0 +1,54 @@
+name: sorg CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v2
+
+      # Used to force dependencies to re-cache once a day so that we don't run
+      # into any weird cache invalidation problems, so to make sure that
+      # dependency fetches keep working.
+      - name: Get date
+        id: get-date
+        run: |
+          echo "::set-output name=date::$(/bin/date -u "+%Y-%m-%d")"
+        shell: bash
+
+      - name: Cache dependencies
+        id: cache-dependencies
+        uses: actions/cache@v2
+        with:
+          # Don't try to use variables in these paths. They don't seem to work
+          # and it'll lead to hours of confusion. You can use a `~`, but I've
+          # expanded HOME so that finding things is easier.
+          path: |
+            /home/runner/go/bin/
+            /home/runner/go/pkg/mod/
+          key: ${{ runner.os }}-${{ steps.get-date.outputs.date }}-cache-dependencies-v2
+
+      - name: Install Golint
+        if: steps.cache-dependencies.outputs.cache-hit != 'true'
+        run: go get -u golang.org/x/lint/golint
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: "Go: Build"
+        run: go build ./...
+
+      - name: "Go: Test"
+        run: go test ./...
+
+      - name: "Check: Gofmt"
+        run: scripts/check_gofmt.sh
+
+      - name: "Check: Golint"
+        run: $(go env GOPATH)/bin/golint -set_exit_status ./...
