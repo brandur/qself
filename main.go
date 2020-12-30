@@ -35,7 +35,7 @@ Qself is a small tool to sync personal data from APIs down to
 local TOML files for easier portability and storage.`),
 	}
 
-	buildCommand := &cobra.Command{
+	syncTwitterCommand := &cobra.Command{
 		Use:   "sync-twitter [target TOML file]",
 		Short: "Sync Twitter data",
 		Long: strings.TrimSpace(`
@@ -47,7 +47,7 @@ Sync personal tweets down from the twitter API.`),
 			}
 		},
 	}
-	rootCmd.AddCommand(buildCommand)
+	rootCmd.AddCommand(syncTwitterCommand)
 
 	if err := envdecode.Decode(&conf); err != nil {
 		die(fmt.Sprintf("Error decoding conf from env: %v", err))
