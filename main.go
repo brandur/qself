@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +37,19 @@ func main() {
 Qself is a small tool to sync personal data from APIs down to
 local TOML files for easier portability and storage.`),
 	}
+
+	reclaimOldTwitterCommand := &cobra.Command{
+		Use:   "reclaim-old-twitter",
+		Short: "Reclaim old Twitter data",
+		Long: strings.TrimSpace(`
+Reclaims old tweets from Black Swan that Twitter won't return.`),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := reclaimOldTwitter(); err != nil {
+				die(fmt.Sprintf("error reclaiming old twitter: %v", err))
+			}
+		},
+	}
+	rootCmd.AddCommand(reclaimOldTwitterCommand)
 
 	syncTwitterCommand := &cobra.Command{
 		Use:   "sync-twitter [target TOML file]",
@@ -89,11 +105,11 @@ type TweetDB struct {
 type Tweet struct {
 	CreatedAt     time.Time      `toml:"created_at"`
 	Entities      *TweetEntities `toml:"entities"`
-	FavoriteCount int            `toml:"favorite_count"`
+	FavoriteCount int            `toml:"favorite_count,omitempty"`
 	ID            int64          `toml:"id"`
 	Reply         *TweetReply    `toml:"reply"`
 	Retweet       *TweetRetweet  `toml:"retweet"`
-	RetweetCount  int            `toml:"retweet_count"`
+	RetweetCount  int            `toml:"retweet_count,omitempty"`
 	Text          string         `toml:"text"`
 }
 
@@ -169,6 +185,91 @@ var logger = &LeveledLogger{Level: LevelInfo}
 func die(message string) {
 	fmt.Fprintf(os.Stderr, message)
 	os.Exit(1)
+}
+
+// BlackSwanTweet is an old tweet recovered from Black Swan. It has fewer
+// fields than that modern variant we use for this project.
+type BlackSwanTweet struct {
+	Content    string    `json:"content"`
+	OccurredAt time.Time `json:"occurred_at"`
+	Slug       string    `json:"slug"`
+}
+
+func reclaimOldTwitter() error {
+	blackSwanDumpFile, err := os.Open("data/black_swan_dump.json")
+	if err != nil {
+		return err
+	}
+	defer blackSwanDumpFile.Close()
+
+	i := 0
+	scanner := bufio.NewScanner(blackSwanDumpFile)
+	var blackSwanTweets []*Tweet
+
+	for scanner.Scan() {
+		i++
+
+		s := scanner.Text()
+		s = strings.TrimPrefix(s, "$")
+		s = strings.TrimSuffix(s, "$")
+
+		var blackSwanTweet BlackSwanTweet
+		err := json.Unmarshal([]byte(s), &blackSwanTweet)
+		if err != nil {
+			return fmt.Errorf("error parsing json on line %v: %w", i, err)
+		}
+
+		id, err := strconv.ParseInt(blackSwanTweet.Slug, 10, 64)
+		if err != nil {
+			return err
+		}
+
+		blackSwanTweets = append(blackSwanTweets, &Tweet{
+			CreatedAt: blackSwanTweet.OccurredAt,
+			ID:        id,
+			Text:      blackSwanTweet.Content,
+		})
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	logger.Infof("Found %v Black Swan tweet(s)", len(blackSwanTweets))
+
+	targetPath := "data/twitter.toml"
+
+	existingData, err := ioutil.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("error reading data file: %w", err)
+	}
+
+	var existingTweetDB TweetDB
+	err = toml.Unmarshal(existingData, &existingTweetDB)
+	if err != nil {
+		return fmt.Errorf("error unmarshaling toml: %w", err)
+	}
+
+	logger.Infof("Found existing '%v'; attempting merge of %v existing tweet(s) with %v Black Swan tweet(s)",
+		targetPath, len(existingTweetDB.Tweets), len(blackSwanTweets))
+
+	// Unlike below, existing tweets take precedence over Black Swan data.
+	tweets := mergeTweets(existingTweetDB.Tweets, blackSwanTweets)
+
+	logger.Infof("Writing %v tweet(s) to '%s'", len(tweets), targetPath)
+
+	tweetDB := &TweetDB{Tweets: tweets}
+	data, err := toml.Marshal(tweetDB)
+	if err != nil {
+		return fmt.Errorf("error marshaling toml: %w", err)
+	}
+
+	err = ioutil.WriteFile(targetPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing data file: %w", err)
+	}
+
+	return nil
 }
 
 func syncTwitter(targetPath string) error {
