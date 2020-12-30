@@ -82,59 +82,59 @@ type Conf struct {
 
 // TweetDB is a database of tweets stored to a TOML file.
 type TweetDB struct {
-	Tweets []*TweetData `toml:"tweets"`
+	Tweets []*Tweet `toml:"tweets"`
 }
 
-// TweetData is a single tweet stored to a TOML file.
-type TweetData struct {
-	CreatedAt     time.Time          `toml:"created_at"`
-	Entities      *TweetDataEntities `toml:"entities"`
-	FavoriteCount int                `toml:"favorite_count"`
-	ID            int64              `toml:"id"`
-	Reply         *TweetDataReply    `toml:"reply"`
-	Retweet       *TweetDataRetweet  `toml:"retweet"`
-	RetweetCount  int                `toml:"retweet_count"`
-	Text          string             `toml:"text"`
+// Tweet is a single tweet stored to a TOML file.
+type Tweet struct {
+	CreatedAt     time.Time      `toml:"created_at"`
+	Entities      *TweetEntities `toml:"entities"`
+	FavoriteCount int            `toml:"favorite_count"`
+	ID            int64          `toml:"id"`
+	Reply         *TweetReply    `toml:"reply"`
+	Retweet       *TweetRetweet  `toml:"retweet"`
+	RetweetCount  int            `toml:"retweet_count"`
+	Text          string         `toml:"text"`
 }
 
-// TweetDataEntities contains various multimedia entries that may be contained
-// in a tweet.
-type TweetDataEntities struct {
-	Medias       []*TweetDataEntitiesMedia       `toml:"medias"`
-	URLs         []*TweetDataEntitiesURL         `toml:"urls"`
-	UserMentions []*TweetDataEntitiesUserMention `toml:"user_mentions"`
+// TweetEntities contains various multimedia entries that may be contained in a
+// tweet.
+type TweetEntities struct {
+	Medias       []*TweetEntitiesMedia       `toml:"medias"`
+	URLs         []*TweetEntitiesURL         `toml:"urls"`
+	UserMentions []*TweetEntitiesUserMention `toml:"user_mentions"`
 }
 
-// TweetDataEntitiesMedia is an image or video stored in a tweet.
-type TweetDataEntitiesMedia struct {
+// TweetEntitiesMedia is an image or video stored in a tweet.
+type TweetEntitiesMedia struct {
 	Type string `toml:"type"`
 	URL  string `toml:"url"`
 }
 
-// TweetDataEntitiesURL is a URL referenced in a tweet.
-type TweetDataEntitiesURL struct {
+// TweetEntitiesURL is a URL referenced in a tweet.
+type TweetEntitiesURL struct {
 	DisplayURL  string `toml:"display_url"`
 	ExpandedURL string `toml:"expanded_url"`
 	URL         string `toml:"url"`
 }
 
-// TweetDataEntitiesUserMention is another user being mentioned in a tweet.
-type TweetDataEntitiesUserMention struct {
+// TweetEntitiesUserMention is another user being mentioned in a tweet.
+type TweetEntitiesUserMention struct {
 	User   string `toml:"user"`
 	UserID int64  `toml:"user_id"`
 }
 
-// TweetDataReply is populated with reply information for when a tweet is a
+// TweetReply is populated with reply information for when a tweet is a
 // reply.
-type TweetDataReply struct {
+type TweetReply struct {
 	StatusID int64  `toml:"status_id"`
 	User     string `toml:"user"`
 	UserID   int64  `toml:"user_id"`
 }
 
-// TweetDataRetweet is populated with retweet information for when a tweet is a
+// TweetRetweet is populated with retweet information for when a tweet is a
 // retweet.
-type TweetDataRetweet struct {
+type TweetRetweet struct {
 	StatusID int64  `toml:"status_id"`
 	User     string `toml:"user"`
 	UserID   int64  `toml:"user_id"`
@@ -186,7 +186,7 @@ func syncTwitter(targetPath string) error {
 	}
 	logger.Infof("Twitter user ID: %v", user.ID)
 
-	var tweetDatas []*TweetData
+	var tweetDatas []*Tweet
 
 	var maxTweetID int64 = 0
 	for {
@@ -264,23 +264,23 @@ func syncTwitter(targetPath string) error {
 	return nil
 }
 
-func tweetDataFromAPITweet(tweet *twitter.Tweet) *TweetData {
+func tweetDataFromAPITweet(tweet *twitter.Tweet) *Tweet {
 	createdAt, err := tweet.CreatedAtTime()
 	if err != nil {
 		panic(err)
 	}
 
-	var entities *TweetDataEntities
+	var entities *TweetEntities
 
 	// For some reason this only includes a single photo given a
 	// multi-photo tweet. A project for another day though ...
 	if len(tweet.Entities.Media) > 0 {
 		if entities == nil {
-			entities = &TweetDataEntities{}
+			entities = &TweetEntities{}
 		}
 
 		for _, media := range tweet.Entities.Media {
-			entities.Medias = append(entities.Medias, &TweetDataEntitiesMedia{
+			entities.Medias = append(entities.Medias, &TweetEntitiesMedia{
 				Type: media.Type,
 				URL:  media.MediaURLHttps,
 			})
@@ -289,11 +289,11 @@ func tweetDataFromAPITweet(tweet *twitter.Tweet) *TweetData {
 
 	if len(tweet.Entities.Urls) > 0 {
 		if entities == nil {
-			entities = &TweetDataEntities{}
+			entities = &TweetEntities{}
 		}
 
 		for _, url := range tweet.Entities.Urls {
-			entities.URLs = append(entities.URLs, &TweetDataEntitiesURL{
+			entities.URLs = append(entities.URLs, &TweetEntitiesURL{
 				DisplayURL:  url.DisplayURL,
 				ExpandedURL: url.ExpandedURL,
 				URL:         url.URL,
@@ -303,36 +303,36 @@ func tweetDataFromAPITweet(tweet *twitter.Tweet) *TweetData {
 
 	if len(tweet.Entities.UserMentions) > 0 {
 		if entities == nil {
-			entities = &TweetDataEntities{}
+			entities = &TweetEntities{}
 		}
 
 		for _, userMention := range tweet.Entities.UserMentions {
-			entities.UserMentions = append(entities.UserMentions, &TweetDataEntitiesUserMention{
+			entities.UserMentions = append(entities.UserMentions, &TweetEntitiesUserMention{
 				User:   userMention.ScreenName,
 				UserID: userMention.ID,
 			})
 		}
 	}
 
-	var reply *TweetDataReply
+	var reply *TweetReply
 	if tweet.InReplyToStatusID != 0 {
-		reply = &TweetDataReply{
+		reply = &TweetReply{
 			StatusID: tweet.InReplyToStatusID,
 			User:     tweet.InReplyToScreenName,
 			UserID:   tweet.InReplyToUserID,
 		}
 	}
 
-	var retweet *TweetDataRetweet
+	var retweet *TweetRetweet
 	if status := tweet.RetweetedStatus; status != nil {
-		retweet = &TweetDataRetweet{
+		retweet = &TweetRetweet{
 			StatusID: status.ID,
 			User:     status.User.ScreenName,
 			UserID:   status.User.ID,
 		}
 	}
 
-	return &TweetData{
+	return &Tweet{
 		CreatedAt:     createdAt,
 		Entities:      entities,
 		FavoriteCount: tweet.FavoriteCount,
@@ -344,10 +344,10 @@ func tweetDataFromAPITweet(tweet *twitter.Tweet) *TweetData {
 	}
 }
 
-func mergeTweets(s1, s2 []*TweetData) []*TweetData {
+func mergeTweets(s1, s2 []*Tweet) []*Tweet {
 	s := append(s1, s2...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].ID < s[j].ID })
-	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ID }).([]*TweetData)
+	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ID }).([]*Tweet)
 	sliceReverse(sMerged)
 	return sMerged
 }

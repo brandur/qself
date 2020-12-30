@@ -7,12 +7,12 @@ import (
 )
 
 func TestMergeTweets(t *testing.T) {
-	s1 := []*TweetData{
+	s1 := []*Tweet{
 		{ID: 125, Text: "s1 125"},
 		{ID: 124, Text: "s1 124"},
 		{ID: 122, Text: "s1 122"},
 	}
-	s2 := []*TweetData{
+	s2 := []*Tweet{
 		{ID: 124, Text: "s2 124"},
 		{ID: 123, Text: "s2 123"},
 		{ID: 121, Text: "s2 121"},
@@ -22,7 +22,7 @@ func TestMergeTweets(t *testing.T) {
 
 	assert.Equal(
 		t,
-		[]*TweetData{
+		[]*Tweet{
 			{ID: 125, Text: "s1 125"},
 			{ID: 124, Text: "s1 124"}, // s1 is preferred
 			{ID: 123, Text: "s2 123"},
