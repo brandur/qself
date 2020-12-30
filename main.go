@@ -227,8 +227,6 @@ func syncTwitter(targetPath string) error {
 	// Twitter returns a maximum of ~3200 tweets ever, so try to maintain older
 	// ones by merging any existing data that we already have.
 	if _, err := os.Stat(targetPath); err == nil {
-		logger.Infof("Found existing '%v'; attempting merge", targetPath)
-
 		existingData, err := ioutil.ReadFile(targetPath)
 		if err != nil {
 			return fmt.Errorf("error reading data file: %w", err)
@@ -240,12 +238,17 @@ func syncTwitter(targetPath string) error {
 			return fmt.Errorf("error unmarshaling toml: %w", err)
 		}
 
+		logger.Infof("Found existing '%v'; attempting merge of %v existing tweet(s) with %v current tweet(s)",
+			targetPath, len(existingTweetDB.Tweets), len(tweetDatas))
+
 		tweetDatas = mergeTweets(tweetDatas, existingTweetDB.Tweets)
 	} else if os.IsNotExist(err) {
 		logger.Infof("Existing DB at '%v' not found; starting fresh", targetPath)
 	} else {
 		return err
 	}
+
+	logger.Infof("Writing %v tweet(s) to '%s'", len(tweetDatas), targetPath)
 
 	tweetDB := &TweetDB{Tweets: tweetDatas}
 	data, err := toml.Marshal(tweetDB)
