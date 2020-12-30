@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"html"
 	"io/ioutil"
 	"os"
 	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +38,19 @@ func main() {
 Qself is a small tool to sync personal data from APIs down to
 local TOML files for easier portability and storage.`),
 	}
+
+	reclaimOldTwitterCommand := &cobra.Command{
+		Use:   "reclaim-old-twitter",
+		Short: "Reclaim old Twitter data",
+		Long: strings.TrimSpace(`
+Reclaims old tweets from a Wayback Machine dump that Twitter won't return.`),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := reclaimOldTwitter(); err != nil {
+				die(fmt.Sprintf("error reclaiming old twitter: %v", err))
+			}
+		},
+	}
+	rootCmd.AddCommand(reclaimOldTwitterCommand)
 
 	syncTwitterCommand := &cobra.Command{
 		Use:   "sync-twitter [target TOML file]",
@@ -169,6 +186,119 @@ var logger = &LeveledLogger{Level: LevelInfo}
 func die(message string) {
 	fmt.Fprintf(os.Stderr, message)
 	os.Exit(1)
+}
+
+// WaybackMachineTweet is an old tweet recovered from the Wayback Machine. It
+// has fewer fields than that modern variant we use for this project.
+type WaybackMachineTweet struct {
+	Content    string    `json:"content"`
+	OccurredAt time.Time `json:"occurred_at"`
+	Slug       string    `json:"slug"`
+}
+
+var waybackMachineTweetRE = regexp.MustCompile(`^\s+(.*?)<span class="meta"><a href="https://web.archive.org/web/[0-9]+/https://twitter.com/brandur/statuses/([0-9]+)" rel="nofollow">(.*?)</a></span>$`)
+
+var linkRE = regexp.MustCompile(`<a href="https://web.archive.org/web/[0-9]+/(.*?)" rel="nofollow">(.*?)</a>`)
+
+func reclaimOldTwitter() error {
+	blackSwanDumpFile, err := os.Open("data/wayback_machine_dump.html")
+	if err != nil {
+		return err
+	}
+	defer blackSwanDumpFile.Close()
+
+	i := 0
+	scanner := bufio.NewScanner(blackSwanDumpFile)
+	var waybackMachineTweets []*Tweet
+
+	for scanner.Scan() {
+		i++
+
+		s := scanner.Text()
+
+		matches := waybackMachineTweetRE.FindAllStringSubmatch(s, -1)
+
+		// logger.Infof("matches = %+v", matches)
+
+		if len(matches) < 1 {
+			continue
+		}
+
+		match := matches[0]
+
+		content := match[1]
+		idStr := match[2]
+		timeStr := match[3]
+
+		content = linkRE.ReplaceAllStringFunc(content, func(link string) string {
+			linkMatches := linkRE.FindStringSubmatch(link)
+			expandedURL := linkMatches[1]
+			display := linkMatches[2]
+
+			if strings.HasPrefix(display, "#") || strings.HasPrefix(display, "@") {
+				return display
+			}
+
+			return expandedURL
+		})
+
+		content = html.UnescapeString(content)
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			return err
+		}
+
+		createdAt, err := time.Parse("Jan 2, 2006 15:04", timeStr)
+		if err != nil {
+			return err
+		}
+
+		logger.Infof("content: %v, id: %v, createdAt: %v", content, id, createdAt)
+
+		waybackMachineTweets = append(waybackMachineTweets, &Tweet{
+			CreatedAt: createdAt,
+			ID:        id,
+			Text:      content,
+		})
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	targetPath := "data/twitter.toml"
+
+	existingData, err := ioutil.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("error reading data file: %w", err)
+	}
+
+	var existingTweetDB TweetDB
+	err = toml.Unmarshal(existingData, &existingTweetDB)
+	if err != nil {
+		return fmt.Errorf("error unmarshaling toml: %w", err)
+	}
+
+	logger.Infof("Found existing '%v'; attempting merge of %v existing tweet(s) with %v old tweet(s)",
+		targetPath, len(existingTweetDB.Tweets), len(waybackMachineTweets))
+
+	tweets := mergeTweets(existingTweetDB.Tweets, waybackMachineTweets)
+
+	logger.Infof("Writing %v tweet(s) to '%s'", len(tweets), targetPath)
+
+	tweetDB := &TweetDB{Tweets: tweets}
+	data, err := toml.Marshal(tweetDB)
+	if err != nil {
+		return fmt.Errorf("error marshaling toml: %w", err)
+	}
+
+	err = ioutil.WriteFile(targetPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing data file: %w", err)
+	}
+
+	return nil
 }
 
 func syncTwitter(targetPath string) error {
