@@ -140,25 +140,25 @@ type TwitterConf struct {
 // parsing string.
 const goodreadsTimeFormat = "Mon Jan 2 15:04:05 -0700 2006"
 
-// APIAuthor is an author nested within a Goodreads book from the API.
-type APIAuthor struct {
-	XMLName struct{} `xml:"author"`
-
-	ID   int    `xml:"id"`
-	Name string `xml:"name"`
-}
-
 // APIBook is the book nested within a Goodreads review from the API.
 type APIBook struct {
 	XMLName struct{} `xml:"book"`
 
-	Authors       []*APIAuthor `xml:"authors>author"`
-	ID            int          `xml:"id"`
-	ISBN          string       `xml:"isbn"`
-	ISBN13        string       `xml:"isbn13"`
-	NumPages      int          `xml:"num_pages"`
-	PublishedYear int          `xml:"published"`
-	Title         string       `xml:"title"`
+	Authors       []*APIBookAuthor `xml:"authors>author"`
+	ID            int              `xml:"id"`
+	ISBN          string           `xml:"isbn"`
+	ISBN13        string           `xml:"isbn13"`
+	NumPages      int              `xml:"num_pages"`
+	PublishedYear int              `xml:"published"`
+	Title         string           `xml:"title"`
+}
+
+// APIBookAuthor is an author nested within a Goodreads book from the API.
+type APIBookAuthor struct {
+	XMLName struct{} `xml:"author"`
+
+	ID   int    `xml:"id"`
+	Name string `xml:"name"`
 }
 
 // APIReview is a single review within a Goodreads reviews API request.
@@ -179,30 +179,30 @@ type APIReviewsRoot struct {
 	Reviews []*APIReview `xml:"reviews>review"`
 }
 
-// BookDB is a database of Goodreads books stored to a TOML file.
-type BookDB struct {
-	Books []*Book `toml:"books"`
+// Reading is a single Goodreads book stored to a TOML file.
+type Reading struct {
+	Authors       []*ReadingAuthor `toml:"authors"`
+	ID            int              `toml:"id"`
+	ISBN          string           `toml:"isbn"`
+	ISBN13        string           `toml:"isbn13"`
+	NumPages      int              `toml:"num_pages"`
+	PublishedYear int              `toml:"published_year"`
+	ReadAt        time.Time        `toml:"read_at"`
+	Rating        int              `toml:"rating"`
+	Review        string           `toml:"review"`
+	ReviewID      int              `toml:"review_id"`
+	Title         string           `toml:"title"`
 }
 
-// Author is a single Goodreads author stored to a TOML file.
-type Author struct {
+// ReadingAuthor is a single Goodreads author stored to a TOML file.
+type ReadingAuthor struct {
 	ID   int    `toml:"id"`
 	Name string `toml:"name"`
 }
 
-// Book is a single Goodreads book stored to a TOML file.
-type Book struct {
-	Authors       []*Author `toml:"authors"`
-	ID            int       `toml:"id"`
-	ISBN          string    `toml:"isbn"`
-	ISBN13        string    `toml:"isbn13"`
-	NumPages      int       `toml:"num_pages"`
-	PublishedYear int       `toml:"published_year"`
-	ReadAt        time.Time `toml:"read_at"`
-	Rating        int       `toml:"rating"`
-	Review        string    `toml:"review"`
-	ReviewID      int       `toml:"review_id"`
-	Title         string    `toml:"title"`
+// ReadingDB is a database of Goodreads readings stored to a TOML file.
+type ReadingDB struct {
+	Readings []*Reading `toml:"readings"`
 }
 
 //
@@ -298,10 +298,10 @@ func absInt(x int) int {
 	return x
 }
 
-func bookFromAPIReview(review *APIReview) *Book {
-	var authors []*Author
+func readingFromAPIReview(review *APIReview) *Reading {
+	var authors []*ReadingAuthor
 	for _, author := range review.Book.Authors {
-		authors = append(authors, &Author{
+		authors = append(authors, &ReadingAuthor{
 			ID:   author.ID,
 			Name: author.Name,
 		})
@@ -318,7 +318,7 @@ func bookFromAPIReview(review *APIReview) *Book {
 		logger.Errorf("No read at time for book: %v", review.Book.Title)
 	}
 
-	return &Book{
+	return &Reading{
 		Authors:       authors,
 		ID:            review.Book.ID,
 		ISBN:          review.Book.ISBN,
@@ -405,12 +405,12 @@ func syncGoodreads(targetPath string) error {
 		return fmt.Errorf("error decoding conf from env: %v", err)
 	}
 
-	var books []*Book
+	var readings []*Reading
 	client := &http.Client{}
 	page := 1
 
 	for {
-		logger.Infof("Paging; num books accumulated: %v, page: %v", len(books), page)
+		logger.Infof("Paging; num readings accumulated: %v, page: %v", len(readings), page)
 
 		req, err := http.NewRequest("GET", fmt.Sprintf("https://www.goodreads.com/review/list/%s.xml", conf.GoodreadsID), nil)
 		if err != nil {
@@ -444,7 +444,7 @@ func syncGoodreads(targetPath string) error {
 		var root APIReviewsRoot
 		err = xml.Unmarshal(data, &root)
 		if err != nil {
-			return fmt.Errorf("error unmarshaling book reviews from XML: %w", err)
+			return fmt.Errorf("error unmarshaling reviews from XML: %w", err)
 		}
 
 		if len(root.Reviews) < 1 {
@@ -452,7 +452,7 @@ func syncGoodreads(targetPath string) error {
 		}
 
 		for _, apiReview := range root.Reviews {
-			books = append(books, bookFromAPIReview(apiReview))
+			readings = append(readings, readingFromAPIReview(apiReview))
 		}
 
 		page++
@@ -464,26 +464,26 @@ func syncGoodreads(targetPath string) error {
 			return fmt.Errorf("error reading data file: %w", err)
 		}
 
-		var existingBookDB BookDB
-		err = toml.Unmarshal(existingData, &existingBookDB)
+		var existingReadingDB ReadingDB
+		err = toml.Unmarshal(existingData, &existingReadingDB)
 		if err != nil {
 			return fmt.Errorf("error unmarshaling toml: %w", err)
 		}
 
-		logger.Infof("Found existing '%v'; attempting merge of %v existing book(s) with %v current book(s)",
-			targetPath, len(existingBookDB.Books), len(books))
+		logger.Infof("Found existing '%v'; attempting merge of %v existing readings(s) with %v current readings(s)",
+			targetPath, len(existingReadingDB.Readings), len(readings))
 
-		books = mergeBooks(books, existingBookDB.Books)
+		readings = mergeReadings(readings, existingReadingDB.Readings)
 	} else if os.IsNotExist(err) {
 		logger.Infof("Existing DB at '%v' not found; starting fresh", targetPath)
 	} else {
 		return err
 	}
 
-	logger.Infof("Writing %v book(s) to '%s'", len(books), targetPath)
+	logger.Infof("Writing %v readings(s) to '%s'", len(readings), targetPath)
 
-	bookDB := &BookDB{Books: books}
-	data, err := toml.Marshal(bookDB)
+	readingDB := &ReadingDB{Readings: readings}
+	data, err := toml.Marshal(readingDB)
 	if err != nil {
 		return fmt.Errorf("error marshaling toml: %w", err)
 	}
@@ -674,10 +674,10 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 	}
 }
 
-func mergeBooks(s1, s2 []*Book) []*Book {
+func mergeReadings(s1, s2 []*Reading) []*Reading {
 	s := append(s1, s2...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].ReviewID < s[j].ReviewID })
-	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ReviewID }).([]*Book)
+	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ReviewID }).([]*Reading)
 	sliceReverse(sMerged)
 	return sMerged
 }
