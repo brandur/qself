@@ -111,11 +111,42 @@ func TestSanitizeGoodreadsReview(t *testing.T) {
 	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello"))
 	assert.Equal(t, "hello", sanitizeGoodreadsReview("   hello   "))
 	assert.Equal(t, "hel lo", sanitizeGoodreadsReview("   hel lo   "))
+
 	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br>"))
 	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br><br>"))
 	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br >"))
 	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br/>"))
 	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br />"))
+
+	assert.Equal(
+		t,
+		"http://example.com/hello/there",
+		sanitizeGoodreadsReview(`<a href="http://example.com/hello/there">anything</a>`),
+	)
+
+	assert.Equal(
+		t,
+		"http://example.com/hello/there",
+		sanitizeGoodreadsReview(`<a target="_blank" href="http://example.com/hello/there">anything</a>`),
+	)
+
+	assert.Equal(
+		t,
+		"http://example.com/hello/there",
+		sanitizeGoodreadsReview(`<a href="http://example.com/hello/there" target="_blank">anything</a>`),
+	)
+
+	assert.Equal(
+		t,
+		"link to http://example.com/hello/there here",
+		sanitizeGoodreadsReview(`link to <a href="http://example.com/hello/there">anything</a> here`),
+	)
+
+	assert.Equal(
+		t,
+		"http://example.com/hello/there http://example.com/hello/there",
+		sanitizeGoodreadsReview(`<a href="http://example.com/hello/there">anything</a> <a href="http://example.com/hello/there">anything</a>`),
+	)
 }
 
 func TestSliceReverse(t *testing.T) {
