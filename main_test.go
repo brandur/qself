@@ -107,6 +107,17 @@ func TestMergeTweets(t *testing.T) {
 	})
 }
 
+func TestSanitizeGoodreadsReview(t *testing.T) {
+	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello"))
+	assert.Equal(t, "hello", sanitizeGoodreadsReview("   hello   "))
+	assert.Equal(t, "hel lo", sanitizeGoodreadsReview("   hel lo   "))
+	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br>"))
+	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br><br>"))
+	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br >"))
+	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br/>"))
+	assert.Equal(t, "hello", sanitizeGoodreadsReview("hello<br />"))
+}
+
 func TestSliceReverse(t *testing.T) {
 	s := []int{1, 2, 3}
 	sliceReverse(s)

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -327,10 +328,21 @@ func readingFromAPIReview(review *APIReview) *Reading {
 		PublishedYear: review.Book.PublishedYear,
 		ReadAt:        readAt,
 		Rating:        review.Rating,
-		Review:        strings.TrimSpace(review.Body),
+		Review:        sanitizeGoodreadsReview(review.Body),
 		ReviewID:      review.ID,
 		Title:         review.Book.Title,
 	}
+}
+
+var htmlLineBreakRE = regexp.MustCompile(`<br ?/?>`)
+
+// Goodreads doesn't do a great job of keeping review bodies clean, and does
+// things like add HTML line breaks where the user has inserted newlines. Take
+// these out and leave the review looking roughly Markdown-esque.
+func sanitizeGoodreadsReview(review string) string {
+	review = htmlLineBreakRE.ReplaceAllString(review, "\n")
+
+	return strings.TrimSpace(review)
 }
 
 func die(message string) {
