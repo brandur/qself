@@ -166,9 +166,48 @@ var logger = &LeveledLogger{Level: LevelInfo}
 //
 //////////////////////////////////////////////////////////////////////////////
 
+func absInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 func die(message string) {
 	fmt.Fprintf(os.Stderr, message)
 	os.Exit(1)
+}
+
+// Because we track a tweet's number of favorites and retweets, a problem with
+// the current system is that we update the data file constantly as these
+// numbers change trivially. Even if you're not a super popular persona on
+// Twitter who's getting new likes and retweets all the time, there's still an
+// ambient level of background changes as numbers on old tweets increment or
+// decrement by a few at a time. My guess is that it's from people deleting
+// their accounts or setting them private, but I'm not sure.
+//
+// Try to keep the system churning less by preferring the data that we already
+// have if the change detected is "trivial", meaning the likes and retweets
+// only changed by a small amount.
+func flipDuplicateTweetsOnTrivialChanges(tweets []*Tweet) {
+	for i, j := 0, 1; j < len(tweets); i, j = i+1, j+1 {
+		if tweets[i].ID != tweets[j].ID {
+			continue
+		}
+
+		if tweets[i].Text != tweets[j].Text {
+			continue
+		}
+
+		favoriteDiff := absInt(tweets[i].FavoriteCount - tweets[j].FavoriteCount)
+		retweetDiff := absInt(tweets[i].RetweetCount - tweets[j].RetweetCount)
+
+		if favoriteDiff > 2 || retweetDiff > 2 {
+			continue
+		}
+
+		tweets[i], tweets[j] = tweets[j], tweets[i]
+	}
 }
 
 func syncTwitter(targetPath string) error {
@@ -347,6 +386,7 @@ func tweetDataFromAPITweet(tweet *twitter.Tweet) *Tweet {
 func mergeTweets(s1, s2 []*Tweet) []*Tweet {
 	s := append(s1, s2...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].ID < s[j].ID })
+	flipDuplicateTweetsOnTrivialChanges(s)
 	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ID }).([]*Tweet)
 	sliceReverse(sMerged)
 	return sMerged
