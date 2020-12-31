@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/xml"
 	"fmt"
 	"io/ioutil"
+	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,23 +39,33 @@ Qself is a small tool to sync personal data from APIs down to
 local TOML files for easier portability and storage.`),
 	}
 
+	syncGoodreadsCommand := &cobra.Command{
+		Use:   "sync-goodreads [target TOML file]",
+		Short: "Sync Goodreads data",
+		Long: strings.TrimSpace(`
+Sync personal tweets down from the Goodreads API.`),
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := syncGoodreads(args[0]); err != nil {
+				die(fmt.Sprintf("error syncing Goodreads: %v", err))
+			}
+		},
+	}
+	rootCmd.AddCommand(syncGoodreadsCommand)
+
 	syncTwitterCommand := &cobra.Command{
 		Use:   "sync-twitter [target TOML file]",
 		Short: "Sync Twitter data",
 		Long: strings.TrimSpace(`
-Sync personal tweets down from the twitter API.`),
+Sync personal tweets down from the Twitter API.`),
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := syncTwitter(args[0]); err != nil {
-				die(fmt.Sprintf("error syncing twitter: %v", err))
+				die(fmt.Sprintf("error syncing Twitter: %v", err))
 			}
 		},
 	}
 	rootCmd.AddCommand(syncTwitterCommand)
-
-	if err := envdecode.Decode(&conf); err != nil {
-		die(fmt.Sprintf("Error decoding conf from env: %v", err))
-	}
 
 	if err := rootCmd.Execute(); err != nil {
 		die(fmt.Sprintf("Error executing command: %v", err))
@@ -68,9 +82,20 @@ Sync personal tweets down from the twitter API.`),
 //
 //////////////////////////////////////////////////////////////////////////////
 
-// Conf contains configuration information for the command. It's extracted from
-// environment variables.
-type Conf struct {
+//
+// Confs
+//
+
+// GoodreadsConf contains configuration information for syncing Goodreads. It's
+// extracted from environment variables.
+type GoodreadsConf struct {
+	GoodreadsID  string `env:"GOODREADS_ID,required"`
+	GoodreadsKey string `env:"GOODREADS_KEY,required"`
+}
+
+// TwitterConf contains configuration information for syncing Twitter. It's
+// extracted from environment variables.
+type TwitterConf struct {
 	TwitterConsumerKey    string `env:"TWITTER_CONSUMER_KEY,required"`
 	TwitterConsumerSecret string `env:"TWITTER_CONSUMER_SECRET,required"`
 
@@ -79,6 +104,92 @@ type Conf struct {
 
 	TwitterUser string `env:"TWITTER_USER,required"`
 }
+
+//
+// Goodreads
+//
+
+// Format which Goodreads returns time in implemented as a Go magic time
+// parsing string.
+const goodreadsTimeFormat = "Mon Jan 2 15:04:05 -0700 2006"
+
+// APIAuthor is an author nested within a Goodreads book from the API.
+type APIAuthor struct {
+	XMLName struct{} `xml:"author"`
+
+	ID   int    `xml:"id"`
+	Name string `xml:"name"`
+}
+
+// APIBook is the book nested within a Goodreads review from the API.
+type APIBook struct {
+	XMLName struct{} `xml:"book"`
+
+	Authors       []*APIAuthor `xml:"authors>author"`
+	ID            int          `xml:"id"`
+	ISBN          string       `xml:"isbn"`
+	ISBN13        string       `xml:"isbn13"`
+	NumPages      int          `xml:"num_pages"`
+	PublishedYear int          `xml:"published"`
+	Title         string       `xml:"title"`
+}
+
+// APIReview is a single review within a Goodreads reviews API request.
+type APIReview struct {
+	XMLName struct{} `xml:"review"`
+
+	Body   string   `xml:"body"`
+	Book   *APIBook `xml:"book"`
+	ID     int      `xml:"id"`
+	Rating int      `xml:"rating"`
+	ReadAt string   `xml:"read_at"`
+}
+
+// ParsedReadAt returns when the review was read, but parsed as a time.
+func (r *APIReview) ParsedReadAt() time.Time {
+	t, err := time.Parse(goodreadsTimeFormat, r.ReadAt)
+	if err != nil {
+		logger.Errorf("Could not parse read at time '%s' for book: %s", r.ReadAt, r.Book.Title)
+		return time.Time{}
+	}
+	return t
+}
+
+// APIReviewsRoot is the root document for a Goodreads reviews API request.
+type APIReviewsRoot struct {
+	XMLName struct{} `xml:"GoodreadsResponse"`
+
+	Reviews []*APIReview `xml:"reviews>review"`
+}
+
+// BookDB is a database of Goodreads books stored to a TOML file.
+type BookDB struct {
+	Books []*Book `toml:"books"`
+}
+
+// Author is a single Goodreads author stored to a TOML file.
+type Author struct {
+	ID   int    `toml:"id"`
+	Name string `toml:"name"`
+}
+
+// Book is a single Goodreads book stored to a TOML file.
+type Book struct {
+	Authors       []*Author `toml:"authors"`
+	ID            int       `toml:"id"`
+	ISBN          string    `toml:"isbn"`
+	ISBN13        string    `toml:"isbn13"`
+	NumPages      int       `toml:"num_pages"`
+	PublishedYear int       `toml:"published_year"`
+	ReadAt        time.Time `toml:"read_at"`
+	Rating        int       `toml:"rating"`
+	Review        string    `toml:"review"`
+	Title         string    `toml:"title"`
+}
+
+//
+// Twitter
+//
 
 // TweetDB is a database of tweets stored to a TOML file.
 type TweetDB struct {
@@ -150,10 +261,6 @@ type TweetRetweet struct {
 //
 //////////////////////////////////////////////////////////////////////////////
 
-// Left as a global for now for the sake of convenience, but it's not used in
-// very many places and can probably be refactored as a local if desired.
-var conf Conf
-
 var logger = &LeveledLogger{Level: LevelInfo}
 
 //////////////////////////////////////////////////////////////////////////////
@@ -210,7 +317,106 @@ func flipDuplicateTweetsOnTrivialChanges(tweets []*Tweet) {
 	}
 }
 
+func syncGoodreads(targetPath string) error {
+	var conf GoodreadsConf
+	if err := envdecode.Decode(&conf); err != nil {
+		return fmt.Errorf("error decoding conf from env: %v", err)
+	}
+
+	var books []*Book
+	client := &http.Client{}
+	page := 1
+
+	for {
+		logger.Infof("Paging; num books accumulated: %v, page: %v", len(books), page)
+
+		req, err := http.NewRequest("GET", fmt.Sprintf("https://www.goodreads.com/review/list/%s.xml", conf.GoodreadsID), nil)
+		if err != nil {
+			return err
+		}
+
+		v := url.Values{}
+		v.Set("key", conf.GoodreadsKey)
+		v.Set("page", strconv.Itoa(page))
+		v.Set("per_page", "20")
+		v.Set("shelf", "read")
+		v.Set("sort", "date_read")
+		v.Set("v", "2")
+		req.URL.RawQuery = v.Encode()
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("error listing reviews: %w", err)
+		}
+		defer resp.Body.Close()
+
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("error reading body from reviews list: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status code from Goodreads: %v (%s)", resp.StatusCode, data)
+		}
+
+		var root APIReviewsRoot
+		err = xml.Unmarshal(data, &root)
+		if err != nil {
+			return fmt.Errorf("error unmarshaling book reviews from XML: %w", err)
+		}
+
+		if len(root.Reviews) < 1 {
+			break
+		}
+
+		for _, review := range root.Reviews {
+			var authors []*Author
+			for _, author := range review.Book.Authors {
+				authors = append(authors, &Author{
+					ID:   author.ID,
+					Name: author.Name,
+				})
+			}
+
+			books = append(books, &Book{
+				Authors:       authors,
+				ID:            review.Book.ID,
+				ISBN:          review.Book.ISBN,
+				ISBN13:        review.Book.ISBN13,
+				NumPages:      review.Book.NumPages,
+				PublishedYear: review.Book.PublishedYear,
+				ReadAt:        review.ParsedReadAt(),
+				Rating:        review.Rating,
+				Review:        strings.TrimSpace(review.Body),
+				Title:         review.Book.Title,
+			})
+		}
+
+		page++
+	}
+
+	logger.Infof("Writing %v book(s) to '%s'", len(books), targetPath)
+
+	bookDB := &BookDB{Books: books}
+	data, err := toml.Marshal(bookDB)
+	if err != nil {
+		return fmt.Errorf("error marshaling toml: %w", err)
+	}
+
+	err = ioutil.WriteFile(targetPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing data file: %w", err)
+	}
+
+	return nil
+}
+
 func syncTwitter(targetPath string) error {
+	var conf TwitterConf
+	if err := envdecode.Decode(&conf); err != nil {
+		return fmt.Errorf("error decoding conf from env: %v", err)
+	}
+
 	config := oauth1.NewConfig(conf.TwitterConsumerKey, conf.TwitterConsumerSecret)
 	token := oauth1.NewToken(conf.TwitterAccessToken, conf.TwitterAccessSecret)
 	httpClient := config.Client(oauth1.NoContext, token)
@@ -225,13 +431,13 @@ func syncTwitter(targetPath string) error {
 	}
 	logger.Infof("Twitter user ID: %v", user.ID)
 
-	var tweetDatas []*Tweet
+	var tweets []*Tweet
 
 	var maxTweetID int64 = 0
 	for {
-		logger.Infof("Paging; num tweets accumulated: %v, max tweet ID: %v", len(tweetDatas), maxTweetID)
+		logger.Infof("Paging; num tweets accumulated: %v, max tweet ID: %v", len(tweets), maxTweetID)
 
-		tweets, _, err := client.Timelines.UserTimeline(&twitter.UserTimelineParams{
+		apiTweets, _, err := client.Timelines.UserTimeline(&twitter.UserTimelineParams{
 			Count:     200, // maximum 200
 			MaxID:     maxTweetID,
 			TweetMode: "extended", // non-truncated tweet content
@@ -243,15 +449,15 @@ func syncTwitter(targetPath string) error {
 
 		processedAnyTweets := false
 
-		for _, tweet := range tweets {
+		for _, apiTweet := range apiTweets {
 			// Each page contains the last item from the previous page, so skip
 			// that
-			if maxTweetID != 0 && tweet.ID >= maxTweetID {
+			if maxTweetID != 0 && apiTweet.ID >= maxTweetID {
 				continue
 			}
 
 			processedAnyTweets = true
-			tweetDatas = append(tweetDatas, tweetDataFromAPITweet(&tweet))
+			tweets = append(tweets, tweetDataFromAPITweet(&apiTweet))
 		}
 
 		// No suitable tweets on the page to process which means that we're
@@ -260,7 +466,7 @@ func syncTwitter(targetPath string) error {
 			break
 		}
 
-		maxTweetID = tweets[len(tweets)-1].ID
+		maxTweetID = apiTweets[len(apiTweets)-1].ID
 	}
 
 	// Twitter returns a maximum of ~3200 tweets ever, so try to maintain older
@@ -278,18 +484,18 @@ func syncTwitter(targetPath string) error {
 		}
 
 		logger.Infof("Found existing '%v'; attempting merge of %v existing tweet(s) with %v current tweet(s)",
-			targetPath, len(existingTweetDB.Tweets), len(tweetDatas))
+			targetPath, len(existingTweetDB.Tweets), len(tweets))
 
-		tweetDatas = mergeTweets(tweetDatas, existingTweetDB.Tweets)
+		tweets = mergeTweets(tweets, existingTweetDB.Tweets)
 	} else if os.IsNotExist(err) {
 		logger.Infof("Existing DB at '%v' not found; starting fresh", targetPath)
 	} else {
 		return err
 	}
 
-	logger.Infof("Writing %v tweet(s) to '%s'", len(tweetDatas), targetPath)
+	logger.Infof("Writing %v tweet(s) to '%s'", len(tweets), targetPath)
 
-	tweetDB := &TweetDB{Tweets: tweetDatas}
+	tweetDB := &TweetDB{Tweets: tweets}
 	data, err := toml.Marshal(tweetDB)
 	if err != nil {
 		return fmt.Errorf("error marshaling toml: %w", err)
