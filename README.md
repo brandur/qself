@@ -4,6 +4,15 @@ Qself is a small tool to sync personal data from APIs down to local TOML files f
 
 ## Services
 
+### Goodreads
+
+    qself sync-goodreads data/goodreads.toml
+
+Required env:
+
+* `GOODREADS_ID`: ID of the user whose reviews to sync.
+* `GOODREADS_KEY`: Goodreads API key.
+
 ### Twitter
 
     qself sync-twitter data/twitter.toml
