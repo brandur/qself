@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dghubble/go-twitter/twitter"
@@ -30,6 +31,12 @@ import (
 //
 //////////////////////////////////////////////////////////////////////////////
 
+// SyncAllOptions are options that get passed into the `sync-all` command.
+type SyncAllOptions struct {
+	GoodreadsPath string
+	TwitterPath   string
+}
+
 func main() {
 	var rootCmd = &cobra.Command{
 		Use:   "qself",
@@ -38,6 +45,26 @@ func main() {
 Qself is a small tool to sync personal data from APIs down to
 local TOML files for easier portability and storage.`),
 	}
+
+	var syncAllOptions SyncAllOptions
+	syncAllCommand := &cobra.Command{
+		Use:   "sync-all",
+		Short: "Sync all qself data",
+		Long: strings.TrimSpace(`
+Sync all qself data. Individual target files must be set as options..`),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := syncAll(&syncAllOptions); err != nil {
+				die(fmt.Sprintf("error syncing all: %v", err))
+			}
+		},
+	}
+	syncAllCommand.Flags().StringVar(&syncAllOptions.GoodreadsPath,
+		"goodreads-path", "PATH", "Goodreads target path")
+	syncAllCommand.MarkFlagRequired("goodreads-path")
+	syncAllCommand.Flags().StringVar(&syncAllOptions.TwitterPath,
+		"twitter-path", "PATH", "Twitter target path")
+	syncAllCommand.MarkFlagRequired("twitter-path")
+	rootCmd.AddCommand(syncAllCommand)
 
 	syncGoodreadsCommand := &cobra.Command{
 		Use:   "sync-goodreads [target TOML file]",
@@ -341,6 +368,35 @@ func flipDuplicateTweetsOnTrivialChanges(tweets []*Tweet) {
 
 		tweets[i], tweets[j] = tweets[j], tweets[i]
 	}
+}
+
+func syncAll(opts *SyncAllOptions) error {
+	var wg sync.WaitGroup
+
+	var goodreadsErr error
+	wg.Add(1)
+	go func() {
+		goodreadsErr = syncGoodreads(opts.GoodreadsPath)
+		wg.Done()
+	}()
+
+	var twitterErr error
+	wg.Add(1)
+	go func() {
+		twitterErr = syncTwitter(opts.TwitterPath)
+		wg.Done()
+	}()
+
+	wg.Wait()
+
+	if goodreadsErr != nil {
+		return goodreadsErr
+	}
+	if twitterErr != nil {
+		return twitterErr
+	}
+
+	return nil
 }
 
 func syncGoodreads(targetPath string) error {
