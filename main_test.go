@@ -147,6 +147,12 @@ func TestSanitizeGoodreadsReview(t *testing.T) {
 		"http://example.com/hello/there http://example.com/hello/there",
 		sanitizeGoodreadsReview(`<a href="http://example.com/hello/there">anything</a> <a href="http://example.com/hello/there">anything</a>`),
 	)
+
+	assert.Equal(
+		t,
+		"http://example.com/hello/there?a=b&c=d",
+		sanitizeGoodreadsReview(`<a href="http://example.com/hello/there?a=b&amp;c=d">anything</a>`),
+	)
 }
 
 func TestSliceReverse(t *testing.T) {

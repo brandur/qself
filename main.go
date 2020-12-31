@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/xml"
 	"fmt"
+	"html"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -344,6 +345,8 @@ var htmlLinkRE = regexp.MustCompile(`<a .*?href="(.*?)".*?>.*?</a>`)
 func sanitizeGoodreadsReview(review string) string {
 	review = htmlLineBreakRE.ReplaceAllString(review, "\n")
 	review = htmlLinkRE.ReplaceAllString(review, "$1")
+
+	review = html.UnescapeString(review)
 
 	return strings.TrimSpace(review)
 }
