@@ -145,16 +145,6 @@ type APIReview struct {
 	ReadAt string   `xml:"read_at"`
 }
 
-// ParsedReadAt returns when the review was read, but parsed as a time.
-func (r *APIReview) ParsedReadAt() time.Time {
-	t, err := time.Parse(goodreadsTimeFormat, r.ReadAt)
-	if err != nil {
-		logger.Errorf("Could not parse read at time '%s' for book: %s", r.ReadAt, r.Book.Title)
-		return time.Time{}
-	}
-	return t
-}
-
 // APIReviewsRoot is the root document for a Goodreads reviews API request.
 type APIReviewsRoot struct {
 	XMLName struct{} `xml:"GoodreadsResponse"`
@@ -184,6 +174,7 @@ type Book struct {
 	ReadAt        time.Time `toml:"read_at"`
 	Rating        int       `toml:"rating"`
 	Review        string    `toml:"review"`
+	ReviewID      int       `toml:"review_id"`
 	Title         string    `toml:"title"`
 }
 
@@ -280,6 +271,41 @@ func absInt(x int) int {
 	return x
 }
 
+func bookFromAPIReview(review *APIReview) *Book {
+	var authors []*Author
+	for _, author := range review.Book.Authors {
+		authors = append(authors, &Author{
+			ID:   author.ID,
+			Name: author.Name,
+		})
+	}
+
+	var readAt time.Time
+	if review.ReadAt != "" {
+		t, err := time.Parse(goodreadsTimeFormat, review.ReadAt)
+		if err != nil {
+			panic(err)
+		}
+		readAt = t
+	} else {
+		logger.Errorf("No read at time for book: %v", review.Book.Title)
+	}
+
+	return &Book{
+		Authors:       authors,
+		ID:            review.Book.ID,
+		ISBN:          review.Book.ISBN,
+		ISBN13:        review.Book.ISBN13,
+		NumPages:      review.Book.NumPages,
+		PublishedYear: review.Book.PublishedYear,
+		ReadAt:        readAt,
+		Rating:        review.Rating,
+		Review:        strings.TrimSpace(review.Body),
+		ReviewID:      review.ID,
+		Title:         review.Book.Title,
+	}
+}
+
 func die(message string) {
 	fmt.Fprintf(os.Stderr, message)
 	os.Exit(1)
@@ -369,30 +395,33 @@ func syncGoodreads(targetPath string) error {
 			break
 		}
 
-		for _, review := range root.Reviews {
-			var authors []*Author
-			for _, author := range review.Book.Authors {
-				authors = append(authors, &Author{
-					ID:   author.ID,
-					Name: author.Name,
-				})
-			}
-
-			books = append(books, &Book{
-				Authors:       authors,
-				ID:            review.Book.ID,
-				ISBN:          review.Book.ISBN,
-				ISBN13:        review.Book.ISBN13,
-				NumPages:      review.Book.NumPages,
-				PublishedYear: review.Book.PublishedYear,
-				ReadAt:        review.ParsedReadAt(),
-				Rating:        review.Rating,
-				Review:        strings.TrimSpace(review.Body),
-				Title:         review.Book.Title,
-			})
+		for _, apiReview := range root.Reviews {
+			books = append(books, bookFromAPIReview(apiReview))
 		}
 
 		page++
+	}
+
+	if _, err := os.Stat(targetPath); err == nil {
+		existingData, err := ioutil.ReadFile(targetPath)
+		if err != nil {
+			return fmt.Errorf("error reading data file: %w", err)
+		}
+
+		var existingBookDB BookDB
+		err = toml.Unmarshal(existingData, &existingBookDB)
+		if err != nil {
+			return fmt.Errorf("error unmarshaling toml: %w", err)
+		}
+
+		logger.Infof("Found existing '%v'; attempting merge of %v existing book(s) with %v current book(s)",
+			targetPath, len(existingBookDB.Books), len(books))
+
+		books = mergeBooks(books, existingBookDB.Books)
+	} else if os.IsNotExist(err) {
+		logger.Infof("Existing DB at '%v' not found; starting fresh", targetPath)
+	} else {
+		return err
 	}
 
 	logger.Infof("Writing %v book(s) to '%s'", len(books), targetPath)
@@ -457,7 +486,7 @@ func syncTwitter(targetPath string) error {
 			}
 
 			processedAnyTweets = true
-			tweets = append(tweets, tweetDataFromAPITweet(&apiTweet))
+			tweets = append(tweets, tweetFromAPITweet(&apiTweet))
 		}
 
 		// No suitable tweets on the page to process which means that we're
@@ -509,7 +538,7 @@ func syncTwitter(targetPath string) error {
 	return nil
 }
 
-func tweetDataFromAPITweet(tweet *twitter.Tweet) *Tweet {
+func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 	createdAt, err := tweet.CreatedAtTime()
 	if err != nil {
 		panic(err)
@@ -587,6 +616,14 @@ func tweetDataFromAPITweet(tweet *twitter.Tweet) *Tweet {
 		RetweetCount:  tweet.RetweetCount,
 		Text:          tweet.FullText,
 	}
+}
+
+func mergeBooks(s1, s2 []*Book) []*Book {
+	s := append(s1, s2...)
+	sort.SliceStable(s, func(i, j int) bool { return s[i].ReviewID < s[j].ReviewID })
+	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ReviewID }).([]*Book)
+	sliceReverse(sMerged)
+	return sMerged
 }
 
 func mergeTweets(s1, s2 []*Tweet) []*Tweet {
