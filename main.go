@@ -312,6 +312,11 @@ func sanitizeGoodreadsReview(review string) string {
 	return strings.TrimSpace(review)
 }
 
+// Clean up anything from Twitter for tweet bodies.
+func sanitizeTweetText(text string) string {
+	return html.UnescapeString(text)
+}
+
 func die(message string) {
 	fmt.Fprintf(os.Stderr, message)
 	os.Exit(1)
@@ -706,7 +711,7 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 		Reply:         reply,
 		Retweet:       retweet,
 		RetweetCount:  tweet.RetweetCount,
-		Text:          tweet.FullText,
+		Text:          sanitizeTweetText(tweet.FullText),
 	}
 }
 

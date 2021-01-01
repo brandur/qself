@@ -206,6 +206,12 @@ func TestSanitizeGoodreadsReview(t *testing.T) {
 	)
 }
 
+func TestSanitizeTweetText(t *testing.T) {
+	assert.Equal(t, "hello", sanitizeTweetText("hello"))
+	assert.Equal(t, "<tag>", sanitizeTweetText("<tag>"))
+	assert.Equal(t, "<tag>", sanitizeTweetText("&lt;tag&gt;"))
+}
+
 func TestSliceReverse(t *testing.T) {
 	s := []int{1, 2, 3}
 	sliceReverse(s)
