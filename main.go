@@ -138,10 +138,6 @@ type TwitterConf struct {
 // Goodreads
 //
 
-// Format which Goodreads returns time in implemented as a Go magic time
-// parsing string.
-const goodreadsTimeFormat = "Mon Jan 2 15:04:05 -0700 2006"
-
 // APIBook is the book nested within a Goodreads review from the API.
 type APIBook struct {
 	XMLName struct{} `xml:"book"`
@@ -686,6 +682,10 @@ func mergeTweets(apiTweets, existingTweets []*Tweet) []*Tweet {
 	sliceReverse(sMerged)
 	return sMerged
 }
+
+// Format which Goodreads returns time in implemented as a Go magic time
+// parsing string.
+const goodreadsTimeFormat = "Mon Jan 2 15:04:05 -0700 2006"
 
 func readingFromAPIReview(review *APIReview) *Reading {
 	var authors []*ReadingAuthor
