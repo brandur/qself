@@ -76,7 +76,7 @@ Sync personal tweets down from the Goodreads API.`),
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := syncGoodreads(args[0]); err != nil {
-				die(fmt.Sprintf("error syncing Goodreads: %v", err))
+				die(fmt.Sprintf("(goodreads) error syncing: %v", err))
 			}
 		},
 	}
@@ -90,7 +90,7 @@ Sync personal tweets down from the Twitter API.`),
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := syncTwitter(args[0]); err != nil {
-				die(fmt.Sprintf("error syncing Twitter: %v", err))
+				die(fmt.Sprintf("(twitter) error syncing: %v", err))
 			}
 		},
 	}
@@ -317,6 +317,46 @@ func die(message string) {
 	os.Exit(1)
 }
 
+// Fetches a single Goodreads page and returns all the reviews on it.
+func fetchGoodreadsPage(conf *GoodreadsConf, client *http.Client, page int) ([]*APIReview, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://www.goodreads.com/review/list/%s.xml", conf.GoodreadsID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	v := url.Values{}
+	v.Set("key", conf.GoodreadsKey)
+	v.Set("page", strconv.Itoa(page))
+	v.Set("per_page", "20")
+	v.Set("shelf", "read")
+	v.Set("sort", "date_read")
+	v.Set("v", "2")
+	req.URL.RawQuery = v.Encode()
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error listing reviews: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading body from reviews list: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code from Goodreads: %v (%s)", resp.StatusCode, data)
+	}
+
+	var root APIReviewsRoot
+	err = xml.Unmarshal(data, &root)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshaling reviews from XML: %w", err)
+	}
+
+	return root.Reviews, nil
+}
+
 // Because we track a tweet's number of favorites and retweets, a problem with
 // the current system is that we update the data file constantly as these
 // numbers change trivially. Even if you're not a super popular persona on
@@ -384,55 +424,74 @@ func syncGoodreads(targetPath string) error {
 
 	var readings []*Reading
 	client := &http.Client{}
-	page := 1
 
-	for {
-		logger.Infof("Paging; num readings accumulated: %v, page: %v", len(readings), page)
+	// Unluckily, the Goodreads API is _extremely_ slow. Luckily for us, it
+	// supports offset based pagination, making it quite easy for us to
+	// parallelize.
+	const numSegments = 6
+	var anyErr error
+	var knownEndPage int
+	var mutex sync.RWMutex
+	var wg sync.WaitGroup
+	wg.Add(numSegments)
 
-		req, err := http.NewRequest("GET", fmt.Sprintf("https://www.goodreads.com/review/list/%s.xml", conf.GoodreadsID), nil)
-		if err != nil {
-			return err
-		}
+	for i := 1; i <= numSegments; i++ {
+		segmentNum := i
 
-		v := url.Values{}
-		v.Set("key", conf.GoodreadsKey)
-		v.Set("page", strconv.Itoa(page))
-		v.Set("per_page", "20")
-		v.Set("shelf", "read")
-		v.Set("sort", "date_read")
-		v.Set("v", "2")
-		req.URL.RawQuery = v.Encode()
+		go func() {
+			page := segmentNum
 
-		resp, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("error listing reviews: %w", err)
-		}
-		defer resp.Body.Close()
+			for {
+				logger.Infof("(goodreads) (segment %v) Paging; num readings accumulated: %v, page: %v",
+					segmentNum, len(readings), page)
 
-		data, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("error reading body from reviews list: %w", err)
-		}
+				if knownEndPage != 0 && page >= knownEndPage {
+					logger.Infof("(goodreads) (segment %v) Page %v beyond known end of %v; stopping",
+						segmentNum, page, knownEndPage)
+					break
+				}
 
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status code from Goodreads: %v (%s)", resp.StatusCode, data)
-		}
+				apiReviews, err := fetchGoodreadsPage(&conf, client, page)
+				if err != nil {
+					logger.Errorf("(goodreads) (segment %v) %v", segmentNum, err)
+					anyErr = err
+					break
+				}
 
-		var root APIReviewsRoot
-		err = xml.Unmarshal(data, &root)
-		if err != nil {
-			return fmt.Errorf("error unmarshaling reviews from XML: %w", err)
-		}
+				if len(apiReviews) < 1 {
+					// If we know this page is beyond bounds, mark it as such
+					// to maybe save some API requests.
+					mutex.Lock()
+					if knownEndPage == 0 || page < knownEndPage {
+						logger.Infof("(goodreads) (segment %v) Setting known end page: %v (previously %v)",
+							segmentNum, page, knownEndPage)
+						knownEndPage = page
+					}
+					mutex.Unlock()
 
-		if len(root.Reviews) < 1 {
-			break
-		}
+					break
+				}
 
-		for _, apiReview := range root.Reviews {
-			readings = append(readings, readingFromAPIReview(apiReview))
-		}
+				var pageReadings []*Reading
+				for _, apiReview := range apiReviews {
+					pageReadings = append(pageReadings, readingFromAPIReview(apiReview))
+				}
 
-		page++
+				mutex.Lock()
+				readings = append(readings, pageReadings...)
+				mutex.Unlock()
+
+				page += numSegments
+			}
+
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	if anyErr != nil {
+		return anyErr
 	}
 
 	if _, err := os.Stat(targetPath); err == nil {
@@ -447,17 +506,17 @@ func syncGoodreads(targetPath string) error {
 			return fmt.Errorf("error unmarshaling toml: %w", err)
 		}
 
-		logger.Infof("Found existing '%v'; attempting merge of %v existing readings(s) with %v current readings(s)",
+		logger.Infof("(goodreads) Found existing '%v'; attempting merge of %v existing readings(s) with %v current readings(s)",
 			targetPath, len(existingReadingDB.Readings), len(readings))
 
 		readings = mergeReadings(readings, existingReadingDB.Readings)
 	} else if os.IsNotExist(err) {
-		logger.Infof("Existing DB at '%v' not found; starting fresh", targetPath)
+		logger.Infof("(goodreads) Existing DB at '%v' not found; starting fresh", targetPath)
 	} else {
 		return err
 	}
 
-	logger.Infof("Writing %v readings(s) to '%s'", len(readings), targetPath)
+	logger.Infof("(goodreads) Writing %v readings(s) to '%s'", len(readings), targetPath)
 
 	readingDB := &ReadingDB{Readings: readings}
 	data, err := toml.Marshal(readingDB)
@@ -491,13 +550,13 @@ func syncTwitter(targetPath string) error {
 	if err != nil {
 		return fmt.Errorf("error getting user '%v': %w", conf.TwitterUser, err)
 	}
-	logger.Infof("Twitter user ID: %v", user.ID)
+	logger.Infof("(twitter) User ID: %v", user.ID)
 
 	var tweets []*Tweet
 
 	var maxTweetID int64 = 0
 	for {
-		logger.Infof("Paging; num tweets accumulated: %v, max tweet ID: %v", len(tweets), maxTweetID)
+		logger.Infof("(twitter) Paging; num tweets accumulated: %v, max tweet ID: %v", len(tweets), maxTweetID)
 
 		apiTweets, _, err := client.Timelines.UserTimeline(&twitter.UserTimelineParams{
 			Count:     200, // maximum 200
@@ -545,17 +604,17 @@ func syncTwitter(targetPath string) error {
 			return fmt.Errorf("error unmarshaling toml: %w", err)
 		}
 
-		logger.Infof("Found existing '%v'; attempting merge of %v existing tweet(s) with %v current tweet(s)",
+		logger.Infof("(twitter) Found existing '%v'; attempting merge of %v existing tweet(s) with %v current tweet(s)",
 			targetPath, len(existingTweetDB.Tweets), len(tweets))
 
 		tweets = mergeTweets(tweets, existingTweetDB.Tweets)
 	} else if os.IsNotExist(err) {
-		logger.Infof("Existing DB at '%v' not found; starting fresh", targetPath)
+		logger.Infof("(twitter) Existing DB at '%v' not found; starting fresh", targetPath)
 	} else {
 		return err
 	}
 
-	logger.Infof("Writing %v tweet(s) to '%s'", len(tweets), targetPath)
+	logger.Infof("(twitter) Writing %v tweet(s) to '%s'", len(tweets), targetPath)
 
 	tweetDB := &TweetDB{Tweets: tweets}
 	data, err := toml.Marshal(tweetDB)
