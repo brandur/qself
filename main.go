@@ -703,20 +703,20 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 // with Twitter, we never really keep anything from the existing set,
 // preferring what's in the API in all cases. I'm leaving it in for now because
 // it doesn't matter, and also I may want to alter this behavior at some point.
-func mergeReadings(s1, s2 []*Reading) []*Reading {
-	s2 = sliceKeepOnly(s2, s1,
-		func(i int) interface{} { return s2[i].ReviewID },
-		func(i int) interface{} { return s1[i].ReviewID },
+func mergeReadings(apiReadings, existingReadings []*Reading) []*Reading {
+	existingReadings = sliceKeepOnly(existingReadings, apiReadings,
+		func(i int) interface{} { return existingReadings[i].ReviewID },
+		func(i int) interface{} { return apiReadings[i].ReviewID },
 	).([]*Reading)
-	s := append(s1, s2...)
+	s := append(apiReadings, existingReadings...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].ReviewID < s[j].ReviewID })
 	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ReviewID }).([]*Reading)
 	sliceReverse(sMerged)
 	return sMerged
 }
 
-func mergeTweets(s1, s2 []*Tweet) []*Tweet {
-	s := append(s1, s2...)
+func mergeTweets(apiTweets, existingTweets []*Tweet) []*Tweet {
+	s := append(apiTweets, existingTweets...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].ID < s[j].ID })
 	flipDuplicateTweetsOnTrivialChanges(s)
 	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ID }).([]*Tweet)
