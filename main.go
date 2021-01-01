@@ -380,11 +380,9 @@ func flipDuplicateTweetsOnTrivialChanges(tweets []*Tweet) {
 		favoriteDiff := absInt(tweets[i].FavoriteCount - tweets[j].FavoriteCount)
 		retweetDiff := absInt(tweets[i].RetweetCount - tweets[j].RetweetCount)
 
-		if favoriteDiff > 2 || retweetDiff > 2 {
-			continue
+		if favoriteDiff < 3 && retweetDiff < 3 {
+			tweets[i], tweets[j] = tweets[j], tweets[i]
 		}
-
-		tweets[i], tweets[j] = tweets[j], tweets[i]
 	}
 }
 
