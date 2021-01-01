@@ -300,41 +300,6 @@ func absInt(x int) int {
 	return x
 }
 
-func readingFromAPIReview(review *APIReview) *Reading {
-	var authors []*ReadingAuthor
-	for _, author := range review.Book.Authors {
-		authors = append(authors, &ReadingAuthor{
-			ID:   author.ID,
-			Name: author.Name,
-		})
-	}
-
-	var readAt time.Time
-	if review.ReadAt != "" {
-		t, err := time.Parse(goodreadsTimeFormat, review.ReadAt)
-		if err != nil {
-			panic(err)
-		}
-		readAt = t
-	} else {
-		logger.Errorf("No read at time for book: %v", review.Book.Title)
-	}
-
-	return &Reading{
-		Authors:       authors,
-		ID:            review.Book.ID,
-		ISBN:          review.Book.ISBN,
-		ISBN13:        review.Book.ISBN13,
-		NumPages:      review.Book.NumPages,
-		PublishedYear: review.Book.PublishedYear,
-		ReadAt:        readAt,
-		Rating:        review.Rating,
-		Review:        sanitizeGoodreadsReview(review.Body),
-		ReviewID:      review.ID,
-		Title:         review.Book.Title,
-	}
-}
-
 var htmlLineBreakRE = regexp.MustCompile(`<br ?/?>`)
 
 var htmlLinkRE = regexp.MustCompile(`<a .*?href="(.*?)".*?>.*?</a>`)
@@ -720,6 +685,41 @@ func mergeTweets(apiTweets, existingTweets []*Tweet) []*Tweet {
 	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ID }).([]*Tweet)
 	sliceReverse(sMerged)
 	return sMerged
+}
+
+func readingFromAPIReview(review *APIReview) *Reading {
+	var authors []*ReadingAuthor
+	for _, author := range review.Book.Authors {
+		authors = append(authors, &ReadingAuthor{
+			ID:   author.ID,
+			Name: author.Name,
+		})
+	}
+
+	var readAt time.Time
+	if review.ReadAt != "" {
+		t, err := time.Parse(goodreadsTimeFormat, review.ReadAt)
+		if err != nil {
+			panic(err)
+		}
+		readAt = t
+	} else {
+		logger.Errorf("No read at time for book: %v", review.Book.Title)
+	}
+
+	return &Reading{
+		Authors:       authors,
+		ID:            review.Book.ID,
+		ISBN:          review.Book.ISBN,
+		ISBN13:        review.Book.ISBN13,
+		NumPages:      review.Book.NumPages,
+		PublishedYear: review.Book.PublishedYear,
+		ReadAt:        readAt,
+		Rating:        review.Rating,
+		Review:        sanitizeGoodreadsReview(review.Body),
+		ReviewID:      review.ID,
+		Title:         review.Book.Title,
+	}
 }
 
 func sliceReverse(s interface{}) {
