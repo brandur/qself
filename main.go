@@ -692,7 +692,22 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 	}
 }
 
+// Merge two sets of readings together.
+//
+// The first slice should be new readings from the Goodreads API, the second
+// should be any existing readings. This matters because we remove any readings
+// in the existing set which are no longer in the API (because that means they
+// were deleted).
+//
+// This function is currently extreme overkill at the moment because, unlike
+// with Twitter, we never really keep anything from the existing set,
+// preferring what's in the API in all cases. I'm leaving it in for now because
+// it doesn't matter, and also I may want to alter this behavior at some point.
 func mergeReadings(s1, s2 []*Reading) []*Reading {
+	s2 = sliceKeepOnly(s2, s1,
+		func(i int) interface{} { return s2[i].ReviewID },
+		func(i int) interface{} { return s1[i].ReviewID },
+	).([]*Reading)
 	s := append(s1, s2...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].ReviewID < s[j].ReviewID })
 	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ReviewID }).([]*Reading)
@@ -717,14 +732,42 @@ func sliceReverse(s interface{}) {
 	}
 }
 
+// Keeps only items in s1 which are also available in s2.
+func sliceKeepOnly(s1, s2 interface{}, selector1 func(int) interface{}, selector2 func(int) interface{}) interface{} {
+	s1Slice := reflect.ValueOf(s1)
+	s2Slice := reflect.ValueOf(s2)
+
+	s2Values := make(map[interface{}]struct{})
+	for i := 0; i < s2Slice.Len(); i++ {
+		value := selector2(i)
+		s2Values[value] = struct{}{}
+	}
+
+	j := 0
+
+	for i := 0; i < s1Slice.Len(); i++ {
+		item := s1Slice.Index(i)
+		value := selector1(i)
+
+		if _, ok := s2Values[value]; !ok {
+			continue
+		}
+
+		s1Slice.Index(j).Set(item)
+		j++
+	}
+
+	return s1Slice.Slice(0, j).Interface()
+}
+
 func sliceUniq(s interface{}, selector func(int) interface{}) interface{} {
-	sValue := reflect.ValueOf(s)
+	sSlice := reflect.ValueOf(s)
 
 	seen := make(map[interface{}]struct{})
 	j := 0
 
-	for i := 0; i < sValue.Len(); i++ {
-		value := sValue.Index(i)
+	for i := 0; i < sSlice.Len(); i++ {
+		item := sSlice.Index(i)
 		uniqValue := selector(i)
 
 		if _, ok := seen[uniqValue]; ok {
@@ -732,9 +775,9 @@ func sliceUniq(s interface{}, selector func(int) interface{}) interface{} {
 		}
 
 		seen[uniqValue] = struct{}{}
-		sValue.Index(j).Set(value)
+		sSlice.Index(j).Set(item)
 		j++
 	}
 
-	return sValue.Slice(0, j).Interface()
+	return sSlice.Slice(0, j).Interface()
 }
