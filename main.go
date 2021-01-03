@@ -626,9 +626,31 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 
 	var entities *TweetEntities
 
-	// For some reason this only includes a single photo given a
-	// multi-photo tweet. A project for another day though ...
-	if len(tweet.Entities.Media) > 0 {
+	// The Twitter API is weird. "Extended" entities and entities are almost
+	// the same, except that the extended version will contain more than one
+	// photo where multiple were included, and it will assign a type that isn't
+	// "photo" for videos.
+	//
+	// Twitter doesn't go into specifics on why extended is even a thing, but
+	// it's probably related to the fact that features like videos and multiple
+	// photo uploads were added later on.
+	//
+	// There are still some mysteries though. Getting entities via extended
+	// seems to kind of work, but it seems to be absent for any of my slightly
+	// older multi-photo tweets. This quirk doesn't seem to be documented, so
+	// I'm not sure why.
+	if tweet.ExtendedEntities != nil && len(tweet.ExtendedEntities.Media) > 0 {
+		if entities == nil {
+			entities = &TweetEntities{}
+		}
+
+		for _, media := range tweet.ExtendedEntities.Media {
+			entities.Medias = append(entities.Medias, &TweetEntitiesMedia{
+				Type: media.Type,
+				URL:  media.MediaURLHttps,
+			})
+		}
+	} else if len(tweet.Entities.Media) > 0 {
 		if entities == nil {
 			entities = &TweetEntities{}
 		}
