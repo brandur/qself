@@ -366,6 +366,10 @@ func flipDuplicateTweetsOnTrivialChanges(tweets []*Tweet) {
 			continue
 		}
 
+		if !reflect.DeepEqual(tweets[i].Entities, tweets[j].Entities) {
+			continue
+		}
+
 		favoriteDiff := absInt(tweets[i].FavoriteCount - tweets[j].FavoriteCount)
 		retweetDiff := absInt(tweets[i].RetweetCount - tweets[j].RetweetCount)
 
@@ -634,11 +638,6 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 	// Twitter doesn't go into specifics on why extended is even a thing, but
 	// it's probably related to the fact that features like videos and multiple
 	// photo uploads were added later on.
-	//
-	// There are still some mysteries though. Getting entities via extended
-	// seems to kind of work, but it seems to be absent for any of my slightly
-	// older multi-photo tweets. This quirk doesn't seem to be documented, so
-	// I'm not sure why.
 	if tweet.ExtendedEntities != nil && len(tweet.ExtendedEntities.Media) > 0 {
 		if entities == nil {
 			entities = &TweetEntities{}

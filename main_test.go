@@ -156,6 +156,32 @@ func TestMergeTweets(t *testing.T) {
 			s,
 		)
 	})
+
+	t.Run("NewPreferredOnTrivialChangesIfEntitiesDifferent", func(t *testing.T) {
+		s1 := []*Tweet{
+			{ID: 125, Text: "s1 125"},
+			{ID: 124, Text: "sX 124", FavoriteCount: 4, RetweetCount: 4,
+				Entities: &TweetEntities{Medias: []*TweetEntitiesMedia{{URL: "https://foo.com"}}}},
+		}
+		s2 := []*Tweet{
+			{ID: 124, Text: "sX 124", FavoriteCount: 2, RetweetCount: 2,
+				Entities: &TweetEntities{Medias: []*TweetEntitiesMedia{{URL: "https://bar.com"}}}},
+			{ID: 123, Text: "s2 123"},
+		}
+
+		s := mergeTweets(s1, s2)
+
+		assert.Equal(
+			t,
+			[]*Tweet{
+				{ID: 125, Text: "s1 125"},
+				{ID: 124, Text: "sX 124", FavoriteCount: 4, RetweetCount: 4,
+					Entities: &TweetEntities{Medias: []*TweetEntitiesMedia{{URL: "https://foo.com"}}}},
+				{ID: 123, Text: "s2 123"},
+			},
+			s,
+		)
+	})
 }
 
 func TestSanitizeGoodreadsReview(t *testing.T) {
