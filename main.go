@@ -234,6 +234,7 @@ type TweetEntities struct {
 
 // TweetEntitiesMedia is an image or video stored in a tweet.
 type TweetEntitiesMedia struct {
+	ID   int64  `toml:"id"`
 	Type string `toml:"type"`
 	URL  string `toml:"url"`
 }
@@ -645,6 +646,7 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 
 		for _, media := range tweet.ExtendedEntities.Media {
 			entities.Medias = append(entities.Medias, &TweetEntitiesMedia{
+				ID:   media.ID,
 				Type: media.Type,
 				URL:  media.MediaURLHttps,
 			})
@@ -656,6 +658,7 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 
 		for _, media := range tweet.Entities.Media {
 			entities.Medias = append(entities.Medias, &TweetEntitiesMedia{
+				ID:   media.ID,
 				Type: media.Type,
 				URL:  media.MediaURLHttps,
 			})
