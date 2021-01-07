@@ -418,9 +418,8 @@ func syncGoodreads(targetPath string) error {
 	var readings []*Reading
 	client := &http.Client{}
 
-	// Unluckily, the Goodreads API is _extremely_ slow. Luckily for us, it
-	// supports offset based pagination, making it quite easy for us to
-	// parallelize.
+	// Unluckily, the Goodreads API is very slow. Luckily, it supports offset
+	// based pagination, making it quite easy for us to parallelize.
 	const numSegments = 6
 	var anyErr error
 	var knownEndPage int
