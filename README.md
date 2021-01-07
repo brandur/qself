@@ -10,7 +10,7 @@ Qself is a small tool to sync personal data from APIs down to local TOML files f
         --goodreads-path data/goodreads.toml \
         --twitter-path data/twitter.toml
 
-Requires all the env specified below.
+Requires **all** the env specified in each service below.
 
 ### Goodreads
 
