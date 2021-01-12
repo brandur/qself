@@ -2,7 +2,7 @@
 
 Qself is a small tool to sync personal data from APIs down to local TOML files for easier portability and storage.
 
-See [qself-brandur](https://github.com/brandur/qself) for an example of how to run the program in CI and automatically commit the result to a Git repository.
+See [qself-brandur](https://github.com/brandur/qself-brandur) for an example of how to run the program in CI and automatically commit the result to a Git repository.
 
 ## Services
 
