@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/brandur/wanikaniapi"
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
 	"github.com/joeshaw/envdecode"
@@ -37,6 +38,7 @@ import (
 type SyncAllOptions struct {
 	GoodreadsPath string
 	TwitterPath   string
+	WaniKaniPath  string
 }
 
 func main() {
@@ -53,7 +55,7 @@ local TOML files for easier portability and storage.`),
 		Use:   "sync-all",
 		Short: "Sync all qself data",
 		Long: strings.TrimSpace(`
-Sync all qself data. Individual target files must be set as options..`),
+Sync all qself data. Individual target files should be set as options.`),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := syncAll(&syncAllOptions); err != nil {
 				die(fmt.Sprintf("error syncing all: %v", err))
@@ -62,10 +64,10 @@ Sync all qself data. Individual target files must be set as options..`),
 	}
 	syncAllCommand.Flags().StringVar(&syncAllOptions.GoodreadsPath,
 		"goodreads-path", "PATH", "Goodreads target path")
-	syncAllCommand.MarkFlagRequired("goodreads-path")
 	syncAllCommand.Flags().StringVar(&syncAllOptions.TwitterPath,
 		"twitter-path", "PATH", "Twitter target path")
-	syncAllCommand.MarkFlagRequired("twitter-path")
+	syncAllCommand.Flags().StringVar(&syncAllOptions.WaniKaniPath,
+		"wanikani-path", "PATH", "Twitter target path")
 	rootCmd.AddCommand(syncAllCommand)
 
 	syncGoodreadsCommand := &cobra.Command{
@@ -95,6 +97,20 @@ Sync personal tweets down from the Twitter API.`),
 		},
 	}
 	rootCmd.AddCommand(syncTwitterCommand)
+
+	syncWaniKaniCommand := &cobra.Command{
+		Use:   "sync-wanikani [target TOML file]",
+		Short: "Sync WaniKani data",
+		Long: strings.TrimSpace(`
+Sync personal data down from the WaniKani API.`),
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := syncWaniKani(args[0]); err != nil {
+				die(fmt.Sprintf("(wanikani) error syncing: %v", err))
+			}
+		},
+	}
+	rootCmd.AddCommand(syncWaniKaniCommand)
 
 	if err := rootCmd.Execute(); err != nil {
 		die(fmt.Sprintf("Error executing command: %v", err))
@@ -132,6 +148,12 @@ type TwitterConf struct {
 	TwitterAccessSecret string `env:"TWITTER_ACCESS_SECRET,required"`
 
 	TwitterUser string `env:"TWITTER_USER,required"`
+}
+
+// WaniKaniConf contains configuration information for syncing WaniKani. It's
+// extracted from environment variables.
+type WaniKaniConf struct {
+	WaniKaniAPIToken string `env:"WANI_KANI_API_TOKEN,required"`
 }
 
 //
@@ -268,6 +290,37 @@ type TweetRetweet struct {
 	UserID   int64  `toml:"user_id"`
 }
 
+//
+// WaniKani
+//
+
+// WaniKaniDB is a database of WaniKani objects stored to a TOML file.
+type WaniKaniDB struct {
+	ReviewsUpdatedAt  time.Time `toml:"reviews_updated_at"`
+	SubjectsUpdatedAt time.Time `toml:"subjects_updated_at"`
+
+	Reviews  []*WaniKaniReview  `toml:"reviews"`
+	Subjects []*WaniKaniSubject `toml:"subject"`
+}
+
+// WaniKaniReview is a single WaniKani review stored to a TOML file.
+type WaniKaniReview struct {
+	AssignmentID int64     `toml:"assignment_id"`
+	CreatedAt    time.Time `toml:"created_at"`
+	ID           int64     `toml:"id"`
+	SubjectID    int64     `toml:"subject_id"`
+}
+
+// WaniKaniSubject is a single WaniKani subject stored to a TOML file.
+type WaniKaniSubject struct {
+	ID               int64   `toml:"id"`
+	Level            int     `toml:"level"`
+	Meaning          string  `toml:"meaning"`
+	RadicalCharacter *string `toml:"radical_character,omitempty"`
+	Slug             string  `toml:"slug"`
+	Type             string  `toml:"type"`
+}
+
 //////////////////////////////////////////////////////////////////////////////
 //
 //
@@ -346,6 +399,16 @@ func fetchGoodreadsPage(conf *GoodreadsConf, client *http.Client, page int) ([]*
 	return root.Reviews, nil
 }
 
+func findPrimaryMeaning(meanings []*wanikaniapi.SubjectMeaningObject) *wanikaniapi.SubjectMeaningObject {
+	for _, meaning := range meanings {
+		if meaning.Primary {
+			return meaning
+		}
+	}
+
+	panic("no primary meaning")
+}
+
 // Because we track a tweet's number of favorites and retweets, a problem with
 // the current system is that we update the data file constantly as these
 // numbers change trivially. Even if you're not a super popular persona on
@@ -384,18 +447,31 @@ func syncAll(opts *SyncAllOptions) error {
 	var wg sync.WaitGroup
 
 	var goodreadsErr error
-	wg.Add(1)
-	go func() {
-		goodreadsErr = syncGoodreads(opts.GoodreadsPath)
-		wg.Done()
-	}()
+	if opts.GoodreadsPath != "PATH" {
+		wg.Add(1)
+		go func() {
+			goodreadsErr = syncGoodreads(opts.GoodreadsPath)
+			wg.Done()
+		}()
+	}
 
 	var twitterErr error
-	wg.Add(1)
-	go func() {
-		twitterErr = syncTwitter(opts.TwitterPath)
-		wg.Done()
-	}()
+	if opts.TwitterPath != "PATH" {
+		wg.Add(1)
+		go func() {
+			twitterErr = syncTwitter(opts.TwitterPath)
+			wg.Done()
+		}()
+	}
+
+	var waniKaniErr error
+	if opts.WaniKaniPath != "PATH" {
+		wg.Add(1)
+		go func() {
+			waniKaniErr = syncWaniKani(opts.WaniKaniPath)
+			wg.Done()
+		}()
+	}
 
 	wg.Wait()
 
@@ -404,6 +480,9 @@ func syncAll(opts *SyncAllOptions) error {
 	}
 	if twitterErr != nil {
 		return twitterErr
+	}
+	if waniKaniErr != nil {
+		return waniKaniErr
 	}
 
 	return nil
@@ -519,6 +598,167 @@ func syncGoodreads(targetPath string) error {
 	err = ioutil.WriteFile(targetPath, data, 0644)
 	if err != nil {
 		return fmt.Errorf("error writing data file: %w", err)
+	}
+
+	return nil
+}
+
+func syncWaniKani(targetPath string) error {
+	var conf WaniKaniConf
+	if err := envdecode.Decode(&conf); err != nil {
+		return fmt.Errorf("error decoding conf from env: %v", err)
+	}
+
+	client := wanikaniapi.NewClient(&wanikaniapi.ClientConfig{
+		APIToken: conf.WaniKaniAPIToken,
+		Logger:   logger,
+	})
+
+	//
+	// Read previous file
+	//
+
+	var existingReviews []*WaniKaniReview
+	var existingSubjects []*WaniKaniSubject
+
+	var reviewsUpdatedAt *time.Time
+	var subjectsUpdatedAt *time.Time
+
+	// WaniKani provides very good facilities for doing incremental updates, so
+	// don't hit them more often than we need to by reusing existing data where
+	// appropriate.
+	if _, err := os.Stat(targetPath); err == nil {
+		existingData, err := ioutil.ReadFile(targetPath)
+		if err != nil {
+			return fmt.Errorf("error reading data file: %w", err)
+		}
+
+		var existingWaniKaniDB WaniKaniDB
+		err = toml.Unmarshal(existingData, &existingWaniKaniDB)
+		if err != nil {
+			return fmt.Errorf("error unmarshaling toml: %w", err)
+		}
+
+		existingReviews = existingWaniKaniDB.Reviews
+		existingSubjects = existingWaniKaniDB.Subjects
+
+		reviewsUpdatedAt = &existingWaniKaniDB.ReviewsUpdatedAt
+		subjectsUpdatedAt = &existingWaniKaniDB.SubjectsUpdatedAt
+
+		logger.Infof("(wanikani) Found existing '%v'; running incremental update", targetPath)
+	} else if os.IsNotExist(err) {
+		logger.Infof("(wanikani) Existing DB at '%v' not found; starting fresh", targetPath)
+	} else {
+		return err
+	}
+
+	//
+	// Reviews
+	//
+
+	var reviews []*WaniKaniReview
+	reviewsStartedAt := time.Now()
+	err := client.PageFully(func(id *wanikaniapi.ID) (*wanikaniapi.PageObject, error) {
+		idDisplay := "(empty)"
+		if id != nil {
+			idDisplay = strconv.FormatInt(int64(*id), 10)
+		}
+		logger.Infof("(wanikani) Paging; num reviews accumulated: %v, page after ID: %v",
+			len(reviews), idDisplay)
+
+		page, err := client.ReviewList(&wanikaniapi.ReviewListParams{
+			ListParams: &wanikaniapi.ListParams{
+				PageAfterID: id,
+			},
+			UpdatedAfter: reviewsUpdatedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, apiReview := range page.Data {
+			reviews = append(reviews, waniKaniReviewFromAPIReview(apiReview))
+		}
+
+		return page.PageObject, nil
+	})
+	if err != nil {
+		return fmt.Errorf("error paging wanikani reviews: %v", err)
+	}
+
+	numNewReviews := len(reviews)
+	logger.Infof("(wanikani) Total num reviews accumulated: %v", numNewReviews)
+	if existingReviews != nil {
+		reviews = append(existingReviews, reviews...)
+	}
+	sort.Slice(reviews, func(i, j int) bool { return reviews[i].ID < reviews[j].ID })
+
+	//
+	// Subjects
+	//
+
+	var subjects []*WaniKaniSubject
+	subjectsStartedAt := time.Now()
+	err = client.PageFully(func(id *wanikaniapi.ID) (*wanikaniapi.PageObject, error) {
+		idDisplay := "(empty)"
+		if id != nil {
+			idDisplay = strconv.FormatInt(int64(*id), 10)
+		}
+		logger.Infof("(wanikani) Paging; num subjects accumulated: %v, page after ID: %v",
+			len(subjects), idDisplay)
+
+		page, err := client.SubjectList(&wanikaniapi.SubjectListParams{
+			ListParams: &wanikaniapi.ListParams{
+				PageAfterID: id,
+			},
+			UpdatedAfter: subjectsUpdatedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, apiSubject := range page.Data {
+			subjects = append(subjects, waniKaniSubjectFromAPISubject(apiSubject))
+		}
+
+		return page.PageObject, nil
+	})
+	if err != nil {
+		return fmt.Errorf("error paging wanikani subjects: %v", err)
+	}
+
+	numNewSubjects := len(subjects)
+	logger.Infof("(wanikani) Total num subjects accumulated: %v", numNewSubjects)
+	if existingReviews != nil {
+		subjects = mergeSubjects(subjects, existingSubjects)
+	}
+
+	//
+	// Write new file
+	//
+
+	if numNewReviews > 0 || numNewSubjects > 0 {
+		logger.Infof("(wanikani) Writing %v review(s) / %v subjects(s) to '%s'",
+			len(reviews), len(subjects), targetPath)
+
+		waniKaniDB := &WaniKaniDB{
+			ReviewsUpdatedAt:  reviewsStartedAt,
+			SubjectsUpdatedAt: subjectsStartedAt,
+
+			Reviews:  reviews,
+			Subjects: subjects,
+		}
+		data, err := toml.Marshal(waniKaniDB)
+		if err != nil {
+			return fmt.Errorf("error marshaling toml: %w", err)
+		}
+
+		err = ioutil.WriteFile(targetPath, data, 0644)
+		if err != nil {
+			return fmt.Errorf("error writing data file: %w", err)
+		}
+	} else {
+		logger.Infof("(wanikani) No new data; not writing file")
 	}
 
 	return nil
@@ -744,6 +984,13 @@ func mergeReadings(apiReadings, existingReadings []*Reading) []*Reading {
 	return sMerged
 }
 
+func mergeSubjects(apiSubjects, existingSubjects []*WaniKaniSubject) []*WaniKaniSubject {
+	s := append(existingSubjects, apiSubjects...)
+	sort.SliceStable(s, func(i, j int) bool { return s[i].ID < s[j].ID })
+	sMerged := sliceUniq(s, func(i int) interface{} { return s[i].ID }).([]*WaniKaniSubject)
+	return sMerged
+}
+
 func mergeTweets(apiTweets, existingTweets []*Tweet) []*Tweet {
 	s := append(apiTweets, existingTweets...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].ID < s[j].ID })
@@ -865,4 +1112,48 @@ func sliceUniq(s interface{}, selector func(int) interface{}) interface{} {
 	}
 
 	return sSlice.Slice(0, j).Interface()
+}
+
+func waniKaniReviewFromAPIReview(review *wanikaniapi.Review) *WaniKaniReview {
+	return &WaniKaniReview{
+		AssignmentID: int64(review.Data.AssignmentID),
+		CreatedAt:    review.Data.CreatedAt,
+		ID:           int64(review.ID),
+		SubjectID:    int64(review.Data.SubjectID),
+	}
+}
+
+func waniKaniSubjectFromAPISubject(subject *wanikaniapi.Subject) *WaniKaniSubject {
+	if subject.KanjiData != nil {
+		return &WaniKaniSubject{
+			ID:      int64(subject.ID),
+			Level:   subject.KanjiData.Level,
+			Meaning: findPrimaryMeaning(subject.KanjiData.Meanings).Meaning,
+			Slug:    subject.KanjiData.Slug,
+			Type:    string(subject.ObjectType),
+		}
+	}
+
+	if subject.RadicalData != nil {
+		return &WaniKaniSubject{
+			ID:               int64(subject.ID),
+			Level:            subject.RadicalData.Level,
+			Meaning:          findPrimaryMeaning(subject.RadicalData.Meanings).Meaning,
+			RadicalCharacter: subject.RadicalData.Characters,
+			Slug:             subject.RadicalData.Slug,
+			Type:             string(subject.ObjectType),
+		}
+	}
+
+	if subject.VocabularyData != nil {
+		return &WaniKaniSubject{
+			ID:      int64(subject.ID),
+			Level:   subject.VocabularyData.Level,
+			Meaning: findPrimaryMeaning(subject.VocabularyData.Meanings).Meaning,
+			Slug:    subject.VocabularyData.Slug,
+			Type:    string(subject.ObjectType),
+		}
+	}
+
+	panic("unknown subject type")
 }
