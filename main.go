@@ -863,12 +863,78 @@ func syncTwitter(targetPath string) error {
 }
 
 func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
+	// Tweet's ID. Always keep the identifier for the original tweet, even in
+	// the event of a retweet where we rewrite most of everything.
+	id := tweet.ID
+
+	// Content of the tweet. May be rewritten for a retweet.
+	text := tweet.FullText
+
+	var entities *TweetEntities
+
 	createdAt, err := tweet.CreatedAtTime()
 	if err != nil {
 		panic(err)
 	}
 
-	var entities *TweetEntities
+	// Do replies before retweets because strangely, some retweets show up as
+	// replies when you use the retweeted status. Prefer not to have that.
+	var reply *TweetReply
+	if tweet.InReplyToStatusID != 0 {
+		reply = &TweetReply{
+			StatusID: tweet.InReplyToStatusID,
+			User:     tweet.InReplyToScreenName,
+			UserID:   tweet.InReplyToUserID,
+		}
+	}
+
+	// We do user mentions early because we want to
+	if len(tweet.Entities.UserMentions) > 0 {
+		if entities == nil {
+			entities = &TweetEntities{}
+		}
+
+		for _, userMention := range tweet.Entities.UserMentions {
+			entities.UserMentions = append(entities.UserMentions, &TweetEntitiesUserMention{
+				User:   userMention.ScreenName,
+				UserID: userMention.ID,
+			})
+		}
+	}
+
+	var retweet *TweetRetweet
+	if status := tweet.RetweetedStatus; status != nil {
+		retweet = &TweetRetweet{
+			StatusID: status.ID,
+			User:     status.User.ScreenName,
+			UserID:   status.User.ID,
+		}
+
+		// The standard text fields still truncates a retweeted status to 140
+		// characters (for ... reasons?), so we need to grab it elsewhere. Do
+		// some reconstruction to make it look more like a retweet.
+		text = fmt.Sprintf("RT @%s: %s", status.User.ScreenName, status.FullText)
+
+		// The retweet becomes the original tweet so that we can save its
+		// mentions, media entities, and URLs instead of the original's.
+		tweet = status
+
+		// Do user mentions again to pick up any others that might've been in
+		// the retweet.
+		for _, userMention := range tweet.Entities.UserMentions {
+			entities.UserMentions = append(entities.UserMentions, &TweetEntitiesUserMention{
+				User:   userMention.ScreenName,
+				UserID: userMention.ID,
+			})
+		}
+
+		// Unique in case of repeats in both sets.
+		if entities != nil {
+			entities.UserMentions = sliceUniq(entities.UserMentions, func(i int) interface{} {
+				return entities.UserMentions[i].UserID
+			}).([]*TweetEntitiesUserMention)
+		}
+	}
 
 	// The Twitter API is weird. "Extended" entities and entities are almost
 	// the same, except that the extended version will contain more than one
@@ -918,46 +984,15 @@ func tweetFromAPITweet(tweet *twitter.Tweet) *Tweet {
 		}
 	}
 
-	if len(tweet.Entities.UserMentions) > 0 {
-		if entities == nil {
-			entities = &TweetEntities{}
-		}
-
-		for _, userMention := range tweet.Entities.UserMentions {
-			entities.UserMentions = append(entities.UserMentions, &TweetEntitiesUserMention{
-				User:   userMention.ScreenName,
-				UserID: userMention.ID,
-			})
-		}
-	}
-
-	var reply *TweetReply
-	if tweet.InReplyToStatusID != 0 {
-		reply = &TweetReply{
-			StatusID: tweet.InReplyToStatusID,
-			User:     tweet.InReplyToScreenName,
-			UserID:   tweet.InReplyToUserID,
-		}
-	}
-
-	var retweet *TweetRetweet
-	if status := tweet.RetweetedStatus; status != nil {
-		retweet = &TweetRetweet{
-			StatusID: status.ID,
-			User:     status.User.ScreenName,
-			UserID:   status.User.ID,
-		}
-	}
-
 	return &Tweet{
 		CreatedAt:     createdAt,
 		Entities:      entities,
 		FavoriteCount: tweet.FavoriteCount,
-		ID:            tweet.ID,
+		ID:            id,
 		Reply:         reply,
 		Retweet:       retweet,
 		RetweetCount:  tweet.RetweetCount,
-		Text:          sanitizeTweetText(tweet.FullText),
+		Text:          sanitizeTweetText(text),
 	}
 }
 
