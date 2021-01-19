@@ -667,7 +667,7 @@ func syncWaniKani(targetPath string) error {
 			len(reviews), idDisplay)
 
 		page, err := client.ReviewList(&wanikaniapi.ReviewListParams{
-			ListParams: &wanikaniapi.ListParams{
+			ListParams: wanikaniapi.ListParams{
 				PageAfterID: id,
 			},
 			UpdatedAfter: (*wanikaniapi.WKTime)(reviewsUpdatedAt),
@@ -680,7 +680,7 @@ func syncWaniKani(targetPath string) error {
 			reviews = append(reviews, waniKaniReviewFromAPIReview(apiReview))
 		}
 
-		return page.PageObject, nil
+		return &page.PageObject, nil
 	})
 	if err != nil {
 		return fmt.Errorf("error paging wanikani reviews: %v", err)
@@ -708,7 +708,7 @@ func syncWaniKani(targetPath string) error {
 			len(subjects), idDisplay)
 
 		page, err := client.SubjectList(&wanikaniapi.SubjectListParams{
-			ListParams: &wanikaniapi.ListParams{
+			ListParams: wanikaniapi.ListParams{
 				PageAfterID: id,
 			},
 			UpdatedAfter: (*wanikaniapi.WKTime)(subjectsUpdatedAt),
@@ -721,7 +721,7 @@ func syncWaniKani(targetPath string) error {
 			subjects = append(subjects, waniKaniSubjectFromAPISubject(apiSubject))
 		}
 
-		return page.PageObject, nil
+		return &page.PageObject, nil
 	})
 	if err != nil {
 		return fmt.Errorf("error paging wanikani subjects: %v", err)
