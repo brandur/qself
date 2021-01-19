@@ -658,7 +658,7 @@ func syncWaniKani(targetPath string) error {
 
 	var reviews []*WaniKaniReview
 	reviewsStartedAt := time.Now()
-	err := client.PageFully(func(id *wanikaniapi.ID) (*wanikaniapi.PageObject, error) {
+	err := client.PageFully(func(id *wanikaniapi.WKID) (*wanikaniapi.PageObject, error) {
 		idDisplay := "(empty)"
 		if id != nil {
 			idDisplay = strconv.FormatInt(int64(*id), 10)
@@ -670,7 +670,7 @@ func syncWaniKani(targetPath string) error {
 			ListParams: &wanikaniapi.ListParams{
 				PageAfterID: id,
 			},
-			UpdatedAfter: reviewsUpdatedAt,
+			UpdatedAfter: (*wanikaniapi.WKTime)(reviewsUpdatedAt),
 		})
 		if err != nil {
 			return nil, err
@@ -699,7 +699,7 @@ func syncWaniKani(targetPath string) error {
 
 	var subjects []*WaniKaniSubject
 	subjectsStartedAt := time.Now()
-	err = client.PageFully(func(id *wanikaniapi.ID) (*wanikaniapi.PageObject, error) {
+	err = client.PageFully(func(id *wanikaniapi.WKID) (*wanikaniapi.PageObject, error) {
 		idDisplay := "(empty)"
 		if id != nil {
 			idDisplay = strconv.FormatInt(int64(*id), 10)
@@ -711,7 +711,7 @@ func syncWaniKani(targetPath string) error {
 			ListParams: &wanikaniapi.ListParams{
 				PageAfterID: id,
 			},
-			UpdatedAfter: subjectsUpdatedAt,
+			UpdatedAfter: (*wanikaniapi.WKTime)(subjectsUpdatedAt),
 		})
 		if err != nil {
 			return nil, err
